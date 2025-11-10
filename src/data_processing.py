@@ -44,7 +44,7 @@ def load_and_process_videos(base_paths, img_height, img_width, frames_per_clip, 
                 continue
 
             fps = cap.get(cv2.CAP_PROP_FPS)
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) # <-- La variable correcte
             
             if fps == 0 or fps > 200: 
                 print(f"  Avertissement : FPS invalide ({fps}) pour {video_path}. On utilise 25 par défaut.")
@@ -53,7 +53,9 @@ def load_and_process_videos(base_paths, img_height, img_width, frames_per_clip, 
             frames_in_clip_duration = int(clip_duration * fps)
             step = frames_in_clip_duration // 2  # Chevauchement de 50%
 
-            for start_frame in range(0, total_tables - frames_in_clip_duration, step):
+            # --- CORRECTION DE LA TYPO ICI ---
+            # J'utilise "total_frames" et non "total_tables"
+            for start_frame in range(0, total_frames - frames_in_clip_duration, step):
                 end_frame = start_frame + frames_in_clip_duration
                 frame_indices = np.linspace(start_frame, end_frame - 1, frames_per_clip, dtype=int)
                 
@@ -65,7 +67,6 @@ def load_and_process_videos(base_paths, img_height, img_width, frames_per_clip, 
                     ret, frame = cap.read()
                     
                     if ret:
-                        # --- C'EST LA PARTIE IMPORTANTE ---
                         frame = cv2.resize(frame, (img_height, img_width))
 
                         if len(frame.shape) == 2:
@@ -76,7 +77,6 @@ def load_and_process_videos(base_paths, img_height, img_width, frames_per_clip, 
                             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         
                         frame = frame / 255.0  
-                        # --- FIN DE LA PARTIE IMPORTANTE ---
                         
                         clip_frames.append(frame)
                         frames_read_success += 1
