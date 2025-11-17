@@ -24,7 +24,6 @@ def main(args):
     print("Démarrage du scan des vidéos (création du manifest)...")
     all_data_paths = [args.data_path, args.normal_path]
     
-    # manifest est la liste de (path, class_name, start_frame)
     manifest, class_names = create_clip_manifest(all_data_paths)
     
     if not manifest:
@@ -41,7 +40,6 @@ def main(args):
     # --- 4. SPLIT TRAIN/TEST (sur le manifest, pas sur les données) ---
     print("Division du manifest (Train/Test)...")
     
-    # Extraire les labels pour un split stratifié
     manifest_labels = [item[1] for item in manifest]
     
     train_manifest, test_manifest = train_test_split(
@@ -100,7 +98,6 @@ def main(args):
     )
     callbacks_list = [early_stopping, model_checkpoint]
 
-    # Calculer les "steps" (nombre de lots par époque)
     steps_per_epoch = len(train_manifest) // args.batch_size
     validation_steps = len(test_manifest) // args.batch_size
     
