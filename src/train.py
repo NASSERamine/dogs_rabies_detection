@@ -52,17 +52,21 @@ def main(args):
         X, y_categorical, test_size=0.20, random_state=42, stratify=y_categorical
     )
 
-    # --- 5. CONSTRUCTION OU CHARGEMENT DU MODÈLE (MODIFIÉ) ---
+    # --- 5. CONSTRUCTION OU CHARGEMENT DU MODÈLE (MODIFIÉ V3) ---
     NUM_CLASSES = len(class_names)
     
-    # On définit le chemin du "meilleur modèle"
+    # Définir les DEUX noms de fichiers possibles
     checkpoint_save_path = os.path.join(args.save_path, "best_model_checkpoint.keras")
+    legacy_model_path = os.path.join(args.save_path, "rabies_behavior_model.keras") # L'ancien nom
 
     if os.path.exists(checkpoint_save_path):
-        print(f"--- Chargement du modèle existant depuis : {checkpoint_save_path} ---")
-        # Charger le modèle, qui inclut l'état de l'optimiseur.
+        print(f"--- Chargement du checkpoint (reprise V2+) : {checkpoint_save_path} ---")
         model = tf.keras.models.load_model(checkpoint_save_path)
         print("Modèle chargé.")
+    elif os.path.exists(legacy_model_path):
+        print(f"--- Chargement du modèle V1 (reprise V1) : {legacy_model_path} ---")
+        model = tf.keras.models.load_model(legacy_model_path)
+        print("Modèle V1 chargé. L'entraînement va continuer.")
     else:
         print("--- Construction d'un nouveau modèle (entraînement V1) ---")
         model = build_model(FRAMES_PER_CLIP, IMG_HEIGHT, IMG_WIDTH, NUM_CLASSES)
@@ -84,7 +88,7 @@ def main(args):
     
     # Le ModelCheckpoint est toujours nécessaire pour sauvegarder le *nouveau* meilleur modèle
     model_checkpoint = ModelCheckpoint(
-        filepath=checkpoint_save_path,
+        filepath=checkpoint_save_path, # Il sauvegardera sous le NOUVEAU nom
         save_best_only=True,
         monitor='val_loss',
         mode='min',
