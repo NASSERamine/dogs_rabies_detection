@@ -41,7 +41,6 @@ def create_clip_manifest(base_paths):
         for video_file in video_files:
             video_path = os.path.join(folder_path, video_file)
             
-            # Tenter d'ouvrir la vidéo juste pour obtenir les métadonnées
             cap = cv2.VideoCapture(video_path)
             if not cap.isOpened():
                 print(f"  Avertissement : Impossible d'ouvrir {video_path}")
@@ -52,10 +51,10 @@ def create_clip_manifest(base_paths):
             cap.release()
             
             if fps == 0 or fps > 200: fps = 25
-            if total_frames < 10: continue # Ignorer les vidéos trop courtes
+            if total_frames < 10: continue
 
             frames_in_clip_duration = int(CLIP_DURATION * fps)
-            step = frames_in_clip_duration // 2  # Chevauchement de 50%
+            step = frames_in_clip_duration // 2
 
             if frames_in_clip_duration <= 0:
                 print(f"  Avertissement : Durée de clip invalide pour {video_path}, fps={fps}")
@@ -73,8 +72,11 @@ def load_and_process_clip(video_path, start_frame):
     """
     Charge et traite UN SEUL clip à partir d'un chemin et d'un start_frame.
     """
-    video_path = video_path.decode('utf-8') # Nécessaire pour tf.py_function
-    start_frame = int(start_frame)
+    # --- DÉBUT DE LA CORRECTION ---
+    # Transformer les Tensors en valeurs Python
+    video_path = video_path.numpy().decode('utf-8')
+    start_frame = int(start_frame.numpy())
+    # --- FIN DE LA CORRECTION ---
 
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
@@ -103,7 +105,7 @@ def load_and_process_clip(video_path, start_frame):
                 frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
             else:
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frame = frame / 255.0  # Normalisation
+            frame = frame / 255.0
             clip_frames.append(frame)
             frames_read_success += 1
     
@@ -120,13 +122,13 @@ def tf_load_and_process_clip(video_path, label, start_frame):
     Wrapper TensorFlow pour appeler notre fonction Python (OpenCV).
     """
     [clip_array,] = tf.py_function(
-        load_and_process_clip, # Notre fonction OpenCV
-        [video_path, start_frame], # Les arguments
-        [tf.float32] # Le type de retour
+        load_and_process_clip,
+        [video_path, start_frame],
+        [tf.float32]
     )
     
     clip_array.set_shape((FRAMES_PER_CLIP, IMG_HEIGHT, IMG_WIDTH, 3))
-    label.set_shape(()) # Le label est un scalaire
+    label.set_shape(())
     
     return clip_array, label
 
@@ -134,12 +136,9 @@ def create_dataset(manifest, class_names, batch_size):
     """
     Crée le pipeline tf.data à partir du "manifest" de clips.
     """
-    
-    # 1. Encodage des labels
     le = LabelEncoder()
     le.fit(class_names)
     
-    # 2. Préparer les listes pour TensorFlow
     video_paths = []
     labels = []
     start_frames = []
@@ -149,20 +148,17 @@ def create_dataset(manifest, class_names, batch_size):
         labels.append(le.transform([class_name])[0])
         start_frames.append(float(start))
 
-    # 3. Créer le dataset de base à partir des listes (très léger en RAM)
     dataset = tf.data.Dataset.from_tensor_slices(
         (video_paths, labels, start_frames)
     )
     
-    # 4. Appliquer le chargement et le traitement "à la volée"
     dataset = dataset.map(
         tf_load_and_process_clip, 
         num_parallel_calls=tf.data.experimental.AUTOTUNE
     )
     
-    # 5. Configurer le pipeline pour la performance
-    dataset = dataset.shuffle(buffer_size=500) # Mélanger
-    dataset = dataset.batch(batch_size) # Mettre en lots
-    dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE) # Pré-charger
+    dataset = dataset.shuffle(buffer_size=500)
+    dataset = dataset.batch(batch_size)
+    dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
     
     return dataset, le
