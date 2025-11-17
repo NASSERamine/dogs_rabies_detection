@@ -74,16 +74,20 @@ def main(args):
     else:
         print("--- Construction d'un nouveau modèle (entraînement V1) ---")
         model = build_model(FRAMES_PER_CLIP, IMG_HEIGHT, IMG_WIDTH, NUM_CLASSES)
-        print("Compilation du nouveau modèle...")
-        model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=0.0005),
-            loss='categorical_crossentropy',
-            metrics=['accuracy']
-        )
+    
+    # --- 7. COMPILATION (LA CORRECTION EST ICI) ---
+    print("Compilation/Re-compilation du modèle pour le générateur (tf.data)...")
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=0.0005),
+        # LA CORRECTION : Utiliser 'sparse_' car nos labels sont des chiffres (ex: 2)
+        # et non des vecteurs (ex: [0, 0, 1, 0])
+        loss='sparse_categorical_crossentropy', 
+        metrics=['accuracy']
+    )
     
     model.summary()
 
-    # --- 7. ENTRAÎNEMENT (AVEC GÉNÉRATEURS) ---
+    # --- 8. ENTRAÎNEMENT (AVEC GÉNÉRATEURS) ---
     print("\n--- Démarrage de l'entraînement ---")
     
     early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
