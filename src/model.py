@@ -1,43 +1,45 @@
-import tensorflow as tf
-from tensorflow import keras
 from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Input, Dense, GRU, TimeDistributed, Flatten, Dropout
+from tensorflow.keras.layers import Input, Dense, GRU, TimeDistributed, Flatten, Dropout, GlobalAveragePooling2D
 from tensorflow.keras.applications import MobileNetV2
 
 def build_model(num_frames, img_height, img_width, num_classes):
     """
-    Construit l'architecture du modèle CNN (figé) + GRU.
+    Construit l'architecture CNN + RNN (MobileNetV2 + GRU).
+    Version V2 : Fine-Tuning + GlobalAveragePooling
     """
     
-    # --- 1. L'extracteur de caractéristiques (Les "Yeux") ---
+    # 1. Base MobileNetV2 (CNN)
     base_model = MobileNetV2(
         input_shape=(img_height, img_width, 3),
-        include_top=False,  # On retire la tête de classification ImageNet
-        weights='imagenet'  # On charge les poids pré-entraînés
+        include_top=False,
+        weights='imagenet'
     )
-    # On gèle le CNN ! On ne le ré-entraîne pas.
-    base_model.trainable = False
-
-    # --- 2. Définition de l'architecture complète ---
     
-    # L'entrée de notre modèle
+    # --- FINE TUNING ---
+    # On rend le modèle trainable
+    base_model.trainable = True
+    # Mais on re-gèle les premières couches pour ne pas tout casser
+    # On laisse seulement les 30 dernières couches apprendre les textures "Rage"
+    for layer in base_model.layers[:-30]:
+        layer.trainable = False
+        
+    # 2. Entrée Vidéo
     video_input = Input(shape=(num_frames, img_height, img_width, 3))
     
-    # On applique le CNN à chaque frame de la vidéo
+    # 3. Extraction de caractéristiques sur chaque frame
     cnn_features = TimeDistributed(base_model)(video_input)
     
-    # On aplatit la sortie de chaque frame
-    flattened_features = TimeDistributed(Flatten())(cnn_features)
+    # 4. Pooling Spatial (Réduit la dimensionnalité efficacement)
+    pooled_features = TimeDistributed(GlobalAveragePooling2D())(cnn_features)
     
-    # --- 3. L'analyseur de séquence (La "Mémoire") ---
-    # Le GRU analyse la séquence de caractéristiques
-    temporal_features = GRU(128)(flattened_features)
+    # 5. Analyse Temporelle (GRU)
+    # 64 neurones suffisent avec le GlobalPooling
+    temporal_features = GRU(64, return_sequences=False, dropout=0.4)(pooled_features)
     
-    # --- 4. La tête de classification (Le "Décideur") ---
-    x = Dropout(0.5)(temporal_features) # Régularisation pour éviter l'overfitting
+    # 6. Classification
+    x = Dropout(0.5)(temporal_features)
     output = Dense(num_classes, activation='softmax')(x)
     
-    # On crée le modèle final
     model = Model(inputs=video_input, outputs=output)
     
     return model

@@ -4,107 +4,91 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
-from tensorflow.keras.utils import to_categorical
-
-# --- NOS PROPRES MODULES ---
-from data_processing import load_and_process_videos
+# Imports locaux
+from data_processing import create_clip_manifest, create_dataset
 from model import build_model
 
-# --- 1. DÉFINIR LES PARAMÈTRES ---
+# Paramètres globaux (doivent matcher data_processing)
 CLIP_DURATION = 3
 FRAMES_PER_CLIP = 20
 IMG_HEIGHT = 160
 IMG_WIDTH = 160
-BATCH_SIZE = 8 # Si Colab plante (RAM), changez ceci en 4
 
 def main(args):
-    """
-    Fonction principale d'entraînement avec REPRISE AUTOMATIQUE.
-    """
+    print(f"--- CONFIGURATION: Epochs={args.epochs}, Batch_Size={args.batch_size} ---")
     
-    # --- 2. CHARGEMENT DES DONNÉES ---
-    print("Démarrage du chargement et du prétraitement des données...")
+    # 1. Préparation des données
+    print(">>> Scan des fichiers vidéo...")
     all_data_paths = [args.data_path, args.normal_path]
+    manifest, class_names = create_clip_manifest(all_data_paths)
     
-    X, y, class_names = load_and_process_videos(
-        all_data_paths, IMG_HEIGHT, IMG_WIDTH, FRAMES_PER_CLIP, CLIP_DURATION
-    )
-    
-    if X is None or X.size == 0:
-        print("ERREUR FATALE : Aucune donnée n'a été chargée.")
+    if not manifest:
+        print("❌ ERREUR : Aucune vidéo trouvée. Vérifiez les chemins.")
         return
 
-    print(f"Données chargées. Forme de X : {X.shape}, Forme de y : {y.shape}")
+    print(f"✅ Clips trouvés : {len(manifest)}")
+    print(f"✅ Classes : {class_names}")
 
-    # --- 3. ENCODAGE DES LABELS ---
-    print("Encodage des labels...")
-    le = LabelEncoder()
-    y_encoded = le.fit_transform(y)
-    y_categorical = to_categorical(y_encoded, num_classes=len(class_names))
-    
+    # Sauvegarde des noms de classes pour l'inférence (app.py)
     os.makedirs(args.save_path, exist_ok=True)
-    np.save(os.path.join(args.save_path, "class_names.npy"), le.classes_)
+    np.save(os.path.join(args.save_path, "class_names.npy"), np.array(class_names))
 
-    # --- 4. SPLIT TRAIN/TEST ---
-    print("Division des données (Train/Test)...")
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y_categorical, test_size=0.20, random_state=42, stratify=y_categorical
+    # 2. Séparation Train / Test
+    # On split le manifeste, pas les données chargées (gain de RAM)
+    labels = [m[1] for m in manifest]
+    train_manifest, test_manifest = train_test_split(
+        manifest, 
+        test_size=0.20, 
+        random_state=42, 
+        stratify=labels
     )
+    
+    # 3. Création des Générateurs tf.data
+    train_dataset, le = create_dataset(train_manifest, class_names, args.batch_size)
+    test_dataset, _ = create_dataset(test_manifest, class_names, args.batch_size)
 
-    # --- 5. LOGIQUE DE REPRISE (C'EST ICI LA CLÉ) ---
+    # 4. Construction du Modèle
     NUM_CLASSES = len(class_names)
+    print(">>> Construction du modèle V2 (Fine-Tuning)...")
+    model = build_model(FRAMES_PER_CLIP, IMG_HEIGHT, IMG_WIDTH, NUM_CLASSES)
     
-    # Chemin exact de votre ancien modèle
-    model_path = os.path.join(args.save_path, "rabies_behavior_model.keras")
-    
-    if os.path.exists(model_path):
-        print(f"\n>>> 🔄 MODÈLE TROUVÉ : {model_path}")
-        print(">>> Chargement du modèle existant pour continuer l'entraînement (Fine-tuning)...")
-        # On charge le modèle, ses poids ET l'état de l'optimiseur (le cerveau se souvient)
-        model = tf.keras.models.load_model(model_path)
-    else:
-        print("\n>>> ✨ AUCUN MODÈLE TROUVÉ.")
-        print(">>> Construction d'un nouveau modèle (départ de zéro)...")
-        model = build_model(FRAMES_PER_CLIP, IMG_HEIGHT, IMG_WIDTH, NUM_CLASSES)
-        model.compile(
-            optimizer=tf.keras.optimizers.Adam(learning_rate=0.0005),
-            loss='categorical_crossentropy',
-            metrics=['accuracy']
-        )
-    
+    # Compilation
+    # Note : Learning rate bas (0.0001) car on fait du Fine-Tuning
+    model.compile(
+        optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001), 
+        loss='sparse_categorical_crossentropy', 
+        metrics=['accuracy']
+    )
     model.summary()
 
-    # --- 6. ENTRAÎNEMENT (AJOUT D'ÉPOQUES) ---
-    print(f"\n--- Démarrage de l'entraînement pour {args.epochs} époques supplémentaires ---")
-    
+    # 5. Callbacks (Sauvegarde automatique)
     checkpoint_path = os.path.join(args.save_path, "best_model_checkpoint.keras")
-    
-    callbacks_list = [
-        EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True),
+    callbacks = [
+        EarlyStopping(monitor='val_loss', patience=6, restore_best_weights=True),
         ModelCheckpoint(checkpoint_path, save_best_only=True, monitor='val_loss')
     ]
 
+    # 6. Lancement de l'entraînement
+    print(">>> Démarrage de l'entraînement...")
     model.fit(
-        X_train, y_train,
-        batch_size=BATCH_SIZE,
-        epochs=args.epochs, # Cela rajoute 10 tours de plus
-        validation_data=(X_test, y_test),
-        callbacks=callbacks_list
+        train_dataset,
+        epochs=args.epochs,
+        validation_data=test_dataset,
+        callbacks=callbacks
     )
     
-    print("\n--- Entraînement terminé ---")
-
-    # --- 7. SAUVEGARDE DU RÉSULTAT ---
-    # On met à jour le fichier pour la prochaine fois
-    model.save(model_path)
-    print(f"Modèle mis à jour sauvegardé dans : {model_path}")
+    # Sauvegarde finale
+    final_path = os.path.join(args.save_path, "rabies_behavior_model_final.keras")
+    model.save(final_path)
+    print(f"✅ Entraînement terminé. Modèle sauvegardé sous : {final_path}")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--data_path', type=str, required=True)
-    parser.add_argument('--normal_path', type=str, required=True)
-    parser.add_argument('--save_path', type=str, required=True)
-    parser.add_argument('--epochs', type=int, default=10)
+    parser = argparse.ArgumentParser(description="Entraînement Détection Rage Canine")
+    parser.add_argument('--data_path', type=str, required=True, help="Dossier des symptômes")
+    parser.add_argument('--normal_path', type=str, required=True, help="Dossier des chiens normaux")
+    parser.add_argument('--save_path', type=str, required=True, help="Dossier de sortie")
+    parser.add_argument('--epochs', type=int, default=20)
+    parser.add_argument('--batch_size', type=int, default=4)
+    
     args = parser.parse_args()
     main(args)
