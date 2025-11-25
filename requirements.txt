@@ -3,3 +3,5 @@ opencv-python-headless
 scikit-learn
 numpy
 streamlit
+streamlit
+opencv-python
